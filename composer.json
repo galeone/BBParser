@@ -1,0 +1,23 @@
+{
+    "name": "galeone/bbparser",
+    "type": "library",
+    "description": "An extensible and lightweight bbcode parser written in PHP",
+    "license": "Affero GPL",
+    "require-dev": {
+        "phpunit/phpunit": "4.5.0"
+    },
+    "authors": [
+        {
+            "name": "Paolo Galeone",
+            "email": "nessuno@nerdz.eu",
+            "homepage": "https://www.nerdz.eu/nessuno.",
+            "role": "Developer"
+        }
+    ],
+    "autoload": {
+        "psr-0": {
+            "BBParser": "."
+        }
+    },
+    "minimum-stability": "stable"
+}
