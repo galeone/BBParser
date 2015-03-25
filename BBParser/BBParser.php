@@ -1,6 +1,10 @@
 <?php
-
 namespace BBParser;
+
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'nodes' . DIRECTORY_SEPARATOR . 'Document.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'nodes' . DIRECTORY_SEPARATOR . 'Point.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'nodes' . DIRECTORY_SEPARATOR . 'BBNode.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'nodes' . DIRECTORY_SEPARATOR . 'Paragraph.php';
 
 class BBParser {
     const CANT_CONTAIN_BBCODE = 0;
@@ -88,54 +92,78 @@ class BBParser {
     ];
 
     private $ast, $lastLeaf;
-    private $currentPosition, $oldPosition;
+    private $rawCurrentPosition, $rawOldPosition;
+    private $bbBeginLengthStack, $bbEndLengthStack; // bbcode tag lenghts
     private $string;
-
-    const TEXT_NODE_T = 'textNode';
-    const BBCODE_NODE_T = 'bbcodeNode';
+    private $newLineCounter;
+    private $isParsingBBCode;
 
     public function __construct() {
         $this->reset();
     }
 
     private function reset() {
-        $this->currentPosition = 0;
-        $this->oldPosition = 0;
-        $this->astPosition = 0;
+        $this->rawCurrentPosition = 0;
+        $this->rawOldPosition = 0;
         $this->string = '';
-        $this->ast = $this->createNode('root', self::TEXT_NODE_T);
+        $this->bbBeginLengthStack = [];
+        $this->bbEndLengthStack = [];
+        $this->newLineCounter = 0;
+
+        $this->ast = new Document($this->string, //value
+            [0,0], // range
+            [
+                'start' => new Point(0,0),
+                'end'   => new Point(0,0)
+            ],   //loc
+            [],  //children
+            ''); //raw
         $this->lastLeaf = &$this->ast;
     }
 
-    private function createNode($name, $type) {
-        echo "Creating $name\n";
-        $node = [
-            'name'    => $name,
-            'type'    => $type,          
-            'beginAt' => $this->oldPosition,
-            'endAt'   => $this->currentPosition,
-            'raw'     => substr($this->string, $this->oldPosition, $this->currentPosition - $this->oldPosition),
-            'child'   => null
+    private function rawGoOn() {
+        $this->rawOldPosition = $this->rawCurrentPosition;
+    }
+
+    private function getRaw() {
+        return substr($this->string, $this->rawOldPosition, $this->rawCurrentPosition - $this->rawOldPosition);
+    }
+
+    private function getValue() {
+        $begin = $end = 0;
+        if($this->isParsingBBCode) {
+            $begin = array_pop($this->bbBeginLengthStack);
+            $end   = array_pop($this->bbEndLengthStack);
+        }
+        return substr($this->string, $this->rawOldPosition + $begin, $this->rawCurrentPosition - $this->rawOldPosition - $end);
+    }
+
+    private function getRange() {
+        return [ $this->rawOldPosition, $this->rawCurrentPosition ];
+    }
+
+    //TODO
+    private function getLoc() {
+        return [
+            'start' => new Point(0,0),
+            'end'   => new Point(0,0)
         ];
-        $this->oldPosition = $this->currentPosition;
-        return $node;
     }
 
-    private function createTextNode($name) {
-        return $this->createNode($name, static::TEXT_NODE_T);
+    private function createParagraph() {
+        $ret = new Paragraph($this->getValue(), $this->getRange(), $this->getLoc(), $this->getRaw() );
+        $this->rawGoOn();
+        return $ret;
     }
 
-    private function createBBCodeEmptyNode($name) {
-        $node = $this->createNode($name, static::BBCODE_NODE_T);
-        $node['begin'] = null;
-        $node['body']  = null;
-        $node['end']   = null;
-        return $node;
+    private function createBBNode() {
+        $ret =  new BBNode($this->getValue(), $this->getRange(), $this->getLoc(), $this->getRaw() );
+        $this->rawGoOn();
+        return $ret;
     }
 
     public function appendChild(&$child) {
-        echo "Appending {$child['name']} to {$this->lastLeaf['name']}\n";
-        $this->lastLeaf['child'] = &$child;
+        $this->lastLeaf->appendChild($child);
         $this->lastLeaf = &$child;
     }
 
@@ -145,20 +173,25 @@ class BBParser {
     }
 
     private function parseBegin() {
-        while(isset($this->string[$this->currentPosition]) && $this->string[$this->currentPosition] !== '[') {
-            ++$this->currentPosition;
+        $this->isParsingBBCode = false;
+        while(isset($this->string[$this->rawCurrentPosition]) && $this->string[$this->rawCurrentPosition] !== '[') {
+            ++$this->rawCurrentPosition;
         }
 
-        $textNode = $this->createTextNode('text');
-        $this->appendChild($textNode);
+        $paragraph = $this->createParagraph();
+        $this->appendChild($paragraph);
 
         $tagNameWithOptions = '';
-        while(isset($this->string[$this->currentPosition]) && $this->string[$this->currentPosition] !== ']') {
-            $tagNameWithOptions .= $this->string[$this->currentPosition];
-            ++$this->currentPosition;
+        $beginLen = 0;
+        while(isset($this->string[$this->rawCurrentPosition]) && $this->string[$this->rawCurrentPosition] !== ']') {
+            $tagNameWithOptions .= $this->string[$this->rawCurrentPosition];
+            ++$this->rawCurrentPosition;
+            ++$beginLen;
         }
-        $tagNameWithOptions .= $this->string[$this->currentPosition];
-        ++$this->currentPosition;
+        $tagNameWithOptions .= $this->string[$this->rawCurrentPosition];
+        ++$this->rawCurrentPosition;
+        ++$beginLen;
+        $bbBeginLengthStack[] = $beginLen;
 
         $options = '';
 
@@ -175,6 +208,9 @@ class BBParser {
         $validTagOpened = false;
         $parameters = [];
         if($this->isValidTagName($name, $tagNameWithOptions, $extractParameters)) {
+
+            $this->isParsingBBCode = true;
+
             if(isset($this->beginBB[$name]['function'])) {
                 $validatorName = $this->beginBB[$name]['function']['name'];
                 $validatorParameters = $this->beginBB[$name]['function']['params'];
@@ -183,23 +219,22 @@ class BBParser {
                         $validatorParameters[$id] = $extractParameters[$validatorParam];
                     }
                 }
-                var_dump($validatorParameters);
+                //var_dump($validatorParameters);
                 if(false !== call_user_func_array($validatorName, $validatorParameters)) {
-                    $BBNode = $this->createBBCodeEmptyNode($name);
-                    $BBNode['begin'] = $this->createBBCodeEmptyNode('begin_'.$name);
+                    $BBNode = $this->createBBNode();
                     $this->appendChild($BBNode);
                 } else {
-                    $validationFailedNode = $this->createTextNode('begin_'.$name.'_failed_parameters_validation');
-                    $this->appendChild($validationFailedNode);
+                    $this->isParsingBBCode = false;
+                    $paragraph = $this->createParagraph();
+                    $this->appendChild($paragraph);
                 }
             } else {
-                $BBNode = $this->createBBCodeEmptyNode($name);
-                $BBNode['begin'] = $this->createTextNode('begin_'.$name);
+                $BBNode = $this->createBBNode($name);
                 $this->appendChild($BBNode);
             }
         } else {
-            $invalidTag = $this->createTextNode('invalid_tag');
-            $this->appendChild($invalidTag);
+            $paragraph = $this->createParagraph();
+            $this->appendChild($paragraph);
         }
     }
 
@@ -213,10 +248,10 @@ class BBParser {
 $wat = new BBParser();
 
 $str = 'You wat [url="http://www.google.com"]asd[/url] [user]nigga[/user]?
-[url]lel lol[/url]
-[url="banana"]ciao[/url]
-[small]asdasd[/small]
-[small][small][big]nigger[/big][/small][/smal]';
+    [url]lel lol[/url]
+    [url="banana"]ciao[/url]
+    [small]asdasd[/small]
+    [small][small][big]nigger[/big][/small][/smal]';
 
 print_r($wat->parse($str));
 ?>

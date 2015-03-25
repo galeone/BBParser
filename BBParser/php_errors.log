@@ -1,2 +1,0 @@
-[17-Mar-2015 21:21:47 Europe/Rome] PHP Warning:  preg_match(): Compilation failed: two named subpatterns have the same name at offset 26 in /home/paolo/bbparser/BBParser/BBParser.php on line 144
-[17-Mar-2015 21:24:41 Europe/Rome] PHP Warning:  preg_match(): Compilation failed: unrecognized character after (? or (?- at offset 19 in /home/paolo/bbparser/BBParser/BBParser.php on line 144
